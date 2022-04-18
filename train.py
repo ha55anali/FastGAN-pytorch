@@ -10,6 +10,8 @@ import argparse
 import random
 from tqdm import tqdm
 
+import wandb
+
 from models import weights_init, Discriminator, Generator
 from operation import copy_G_params, load_params, get_dir
 from operation import ImageFolder, InfiniteSamplerWrapper
@@ -161,6 +163,11 @@ def train(args):
         if iteration % 100 == 0:
             print("GAN: loss d: %.5f    loss g: %.5f"%(err_dr, -err_g.item()))
 
+        wandb.log({
+            'loss_d': err_dr,
+            'loss_g': -err_g.item(),
+        })
+
         if iteration % (save_interval*10) == 0:
             backup_para = copy_G_params(netG)
             load_params(netG, avg_param_G)
@@ -198,5 +205,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     print(args)
+
+    wandb.init(config=args)
 
     train(args)
