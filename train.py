@@ -35,21 +35,23 @@ def crop_image_by_part(image, part):
     if part==3:
         return image[:,:,hw:,hw:]
 
-def train_d(net, data, label="real"):
+def train_d(net, data, scaler, label="real"):
     """Train function of discriminator"""
     if label=="real":
         part = random.randint(0, 3)
-        pred, [rec_all, rec_small, rec_part] = net(data, label, part=part)
-        err = F.relu(  torch.rand_like(pred) * 0.2 + 0.8 -  pred).mean() + \
-            percept( rec_all, F.interpolate(data, rec_all.shape[2]) ).sum() +\
-            percept( rec_small, F.interpolate(data, rec_small.shape[2]) ).sum() +\
-            percept( rec_part, F.interpolate(crop_image_by_part(data, part), rec_part.shape[2]) ).sum()
-        err.backward()
+        with torch.amp.autocast():
+            pred, [rec_all, rec_small, rec_part] = net(data, label, part=part)
+            err = F.relu(  torch.rand_like(pred) * 0.2 + 0.8 -  pred).mean() + \
+                percept( rec_all, F.interpolate(data, rec_all.shape[2]) ).sum() +\
+                percept( rec_small, F.interpolate(data, rec_small.shape[2]) ).sum() +\
+                percept( rec_part, F.interpolate(crop_image_by_part(data, part), rec_part.shape[2]) ).sum()
+        scaler.scale(err).backward()
         return pred.mean().item(), rec_all, rec_small, rec_part
     else:
-        pred = net(data, label)
-        err = F.relu( torch.rand_like(pred) * 0.2 + 0.8 + pred).mean()
-        err.backward()
+        with torch.amp.autocast():
+            pred = net(data, label)
+            err = F.relu( torch.rand_like(pred) * 0.2 + 0.8 + pred).mean()
+        scaler.scale(err).backward()
         return pred.mean().item()
         
 
@@ -71,9 +73,9 @@ def train(args):
     current_iteration = 0
     save_interval = 100
     saved_model_folder, saved_image_folder = get_dir(args)
-
-    gscaler=torch.cuda.amp.GradScaler()
     
+    gscaler=torch.cuda.amp.GradScaler()
+
     device = torch.device("cpu")
     if use_cuda:
         device = torch.device("cuda:0")
@@ -139,30 +141,30 @@ def train(args):
         current_batch_size = real_image.size(0)
         noise = torch.Tensor(current_batch_size, nz).normal_(0, 1).to(device)
 
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast():
             fake_images = netG(noise)
 
-            real_image = DiffAugment(real_image, policy=policy)
-            fake_images = [DiffAugment(fake, policy=policy) for fake in fake_images]
-            
-            ## 2. train Discriminator
-            netD.zero_grad()
+        real_image = DiffAugment(real_image, policy=policy)
+        fake_images = [DiffAugment(fake, policy=policy) for fake in fake_images]
+        
+        ## 2. train Discriminator
+        netD.zero_grad()
 
-            err_dr, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, label="real")
-            train_d(netD, [fi.detach() for fi in fake_images], label="fake")
-            # optimizerD.step()
-            
-            ## 3. train Generator
-            netG.zero_grad()
+        err_dr, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, label="real")
+        train_d(netD, [fi.detach() for fi in fake_images], gscaler, label="fake")
+        gscaler.step(optimizerD)
+        # optimizerD.step()
+        
+        ## 3. train Generator
+        netG.zero_grad()
+        with torch.amp.autocast():
             pred_g = netD(fake_images, "fake")
             err_g = -pred_g.mean()
 
-        gscaler.step(optimizerD)
         gscaler.scale(err_g).backward()
-        gscaler.step(optimizerG)
-        gscaler.update()
         # err_g.backward()
         # optimizerG.step()
+        gscaler.step(optimizerG)
 
         for p, avg_p in zip(netG.parameters(), avg_param_G):
             avg_p.mul_(0.999).add_(0.001 * p.data)
@@ -208,7 +210,6 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=8, help='mini batch number of images')
     parser.add_argument('--im_size', type=int, default=1024, help='image resolution')
     parser.add_argument('--ckpt', type=str, default='None', help='checkpoint weight path if have one')
-    parser.add_argument('--amp',action='store_true', help='use mixed precision')
 
 
     args = parser.parse_args()
