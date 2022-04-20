@@ -12,6 +12,7 @@ from tqdm import tqdm
 
 import wandb
 
+
 from models import weights_init, Discriminator, Generator
 from operation import copy_G_params, load_params, get_dir
 from operation import ImageFolder, InfiniteSamplerWrapper
@@ -39,16 +40,20 @@ def train_d(net, data, scaler, label="real"):
     """Train function of discriminator"""
     if label=="real":
         part = random.randint(0, 3)
-        with torch.amp.autocast():
+        with torch.cuda.amp.autocast():
             pred, [rec_all, rec_small, rec_part] = net(data, label, part=part)
-            err = F.relu(  torch.rand_like(pred) * 0.2 + 0.8 -  pred).mean() + \
-                percept( rec_all, F.interpolate(data, rec_all.shape[2]) ).sum() +\
-                percept( rec_small, F.interpolate(data, rec_small.shape[2]) ).sum() +\
-                percept( rec_part, F.interpolate(crop_image_by_part(data, part), rec_part.shape[2]) ).sum()
+
+            err_pred = F.relu(  torch.rand_like(pred) * 0.2 + 0.8 -  pred).mean() 
+            err_rec_all = percept( rec_all, F.interpolate(data, rec_all.shape[2]) ).sum()
+            err_rec_small = percept( rec_small, F.interpolate(data, rec_small.shape[2]) ).sum()
+            err_rec_part = percept( rec_part, F.interpolate(crop_image_by_part(data, part), rec_part.shape[2]) ).sum()
+
+            err = err_pred + err_rec_all + err_rec_small + err_rec_part
+            
         scaler.scale(err).backward()
-        return pred.mean().item(), rec_all, rec_small, rec_part
+        return pred.mean().item(), err ,err_pred, err_rec_all, err_rec_small, err_rec_part, rec_all, rec_small, rec_part
     else:
-        with torch.amp.autocast():
+        with torch.cuda.amp.autocast():
             pred = net(data, label)
             err = F.relu( torch.rand_like(pred) * 0.2 + 0.8 + pred).mean()
         scaler.scale(err).backward()
@@ -141,7 +146,7 @@ def train(args):
         current_batch_size = real_image.size(0)
         noise = torch.Tensor(current_batch_size, nz).normal_(0, 1).to(device)
 
-        with torch.amp.autocast():
+        with torch.cuda.amp.autocast():
             fake_images = netG(noise)
 
         real_image = DiffAugment(real_image, policy=policy)
@@ -150,14 +155,14 @@ def train(args):
         ## 2. train Discriminator
         netD.zero_grad()
 
-        err_dr, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, label="real")
-        train_d(netD, [fi.detach() for fi in fake_images], gscaler, label="fake")
+        err_dr, err_back, err_pred, err_rec_all, err_rec_small, err_rec_part, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, gscaler ,label="real")
+        err_dfake = train_d(netD, [fi.detach() for fi in fake_images], gscaler, label="fake")
         gscaler.step(optimizerD)
         # optimizerD.step()
         
         ## 3. train Generator
         netG.zero_grad()
-        with torch.amp.autocast():
+        with torch.cuda.amp.autocast():
             pred_g = netD(fake_images, "fake")
             err_g = -pred_g.mean()
 
@@ -165,6 +170,7 @@ def train(args):
         # err_g.backward()
         # optimizerG.step()
         gscaler.step(optimizerG)
+        gscaler.update()
 
         for p, avg_p in zip(netG.parameters(), avg_param_G):
             avg_p.mul_(0.999).add_(0.001 * p.data)
@@ -174,10 +180,16 @@ def train(args):
 
         wandb.log({
             'loss_d': err_dr,
+            'loss_d_back': err_back,
+            'loss_d_pred': err_pred,
+            'loss_d_rec_all': err_rec_all,
+            'loss_d_rec_small': err_rec_small,
+            'loss_d_rec_part': err_rec_part,
+            'loss_d_fake': err_dfake,
             'loss_g': -err_g.item(),
         })
 
-        if iteration % (save_interval*10) == 0:
+        if iteration % (args.interval_save_sample) == 0:
             backup_para = copy_G_params(netG)
             load_params(netG, avg_param_G)
             with torch.no_grad():
@@ -187,6 +199,9 @@ def train(args):
                         rec_img_all, rec_img_small,
                         rec_img_part]).add(1).mul(0.5), saved_image_folder+'/rec_%d.jpg'%iteration )
             load_params(netG, backup_para)
+
+            wandb.log({"samples": wandb.Image(saved_image_folder+'/%d.jpg'%iteration),
+                    "samples_rec": wandb.Image(saved_image_folder+'/rec_%d.jpg'%iteration)})
 
         if iteration % (save_interval*50) == 0 or iteration == total_iterations:
             backup_para = copy_G_params(netG)
@@ -206,11 +221,12 @@ if __name__ == "__main__":
     parser.add_argument('--cuda', type=int, default=0, help='index of gpu to use')
     parser.add_argument('--name', type=str, default='test1', help='experiment name')
     parser.add_argument('--iter', type=int, default=50000, help='number of iterations')
+    parser.add_argument('--interval_save_sample', type=int, default=500, help='number of iters to save after')
     parser.add_argument('--start_iter', type=int, default=0, help='the iteration to start training')
     parser.add_argument('--batch_size', type=int, default=8, help='mini batch number of images')
     parser.add_argument('--im_size', type=int, default=1024, help='image resolution')
     parser.add_argument('--ckpt', type=str, default='None', help='checkpoint weight path if have one')
-
+    parser.add_argument('--amp',action='store_true', help='use mixed precision')
 
     args = parser.parse_args()
     print(args)
