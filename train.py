@@ -11,11 +11,12 @@ import random
 from tqdm import tqdm
 
 import wandb
+import os
 
 
 from models import weights_init, Discriminator, Generator
 from operation import copy_G_params, load_params, get_dir
-from operation import ImageFolder, InfiniteSamplerWrapper
+from operation import ImageFolder, ImageFolderList, InfiniteSamplerWrapper
 from diffaug import DiffAugment
 policy = 'color,translation'
 import lpips
@@ -129,8 +130,17 @@ def train(args):
     else:
         dataset = ImageFolder(root=data_root, transform=trans)
 
+    nda_dataset=ImageFolderList(
+        sample_nda(args.nda_path, args.nda_samples),
+        transform=trans
+    )
+
     dataloader = iter(DataLoader(dataset, batch_size=batch_size, shuffle=False,
                       sampler=InfiniteSamplerWrapper(dataset), num_workers=dataloader_workers, pin_memory=True))
+    nda_dataloader = iter(DataLoader(nda_dataset, batch_size=batch_size, shuffle=False,
+                      sampler=InfiniteSamplerWrapper(nda_dataset), num_workers=dataloader_workers, pin_memory=True))
+    
+    print(f'nda samples: {len(nda_dataset)}')
     '''
     loader = MultiEpochsDataLoader(dataset, batch_size=batch_size, 
                                shuffle=True, num_workers=dataloader_workers, 
@@ -173,6 +183,8 @@ def train(args):
     for iteration in tqdm(range(current_iteration, total_iterations+1)):
         real_image = next(dataloader)
         real_image = real_image.to(device)
+        real_fake_image = next(nda_dataloader)
+        real_fake_image = real_fake_image.to(device)
         current_batch_size = real_image.size(0)
         noise = torch.Tensor(current_batch_size, nz).normal_(0, 1).to(device)
 
@@ -180,6 +192,7 @@ def train(args):
             fake_images = netG(noise)
 
         real_image = DiffAugment(real_image, policy=policy)
+        real_fake_image = DiffAugment(real_fake_image, policy=policy)
         fake_images = [DiffAugment(fake, policy=policy) for fake in fake_images]
         
         ## 2. train Discriminator
@@ -187,7 +200,14 @@ def train(args):
 
         err_dr, err_back, err_pred, err_rec_all, err_rec_small, err_rec_part, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, gscaler ,label="real")
         err_dfake = train_d(netD, [fi.detach() for fi in fake_images], gscaler, label="fake")
-        err_drealfake = train_d(netD, jigsaw(real_image, args.jigsaw_k), gscaler, label="real_fake")
+
+        err_drealfake=0
+        if args.nda:
+            if args.jigsaw:
+                err_drealfake = train_d(netD, jigsaw(real_image, args.jigsaw_k), gscaler, label="real_fake")
+            else:
+                err_drealfake = train_d(netD, real_fake_image, gscaler, label="real_fake")
+
         gscaler.step(optimizerD)
         # optimizerD.step()
         
@@ -246,6 +266,25 @@ def train(args):
                         'opt_g': optimizerG.state_dict(),
                         'opt_d': optimizerD.state_dict()}, saved_model_folder+'/all_%d.pth'%iteration)
 
+def sample_nda(path_str, samples=500):
+    paths=path_str.split(',')
+
+    frame = []
+    sample_per_path=samples//len(paths)
+    for p in paths:
+        img_names = os.listdir(p)
+        
+        if len(img_names) < sample_per_path:
+            raise Exception('not enough images in nda folder')
+
+        random.shuffle(img_names)
+        for i in range(sample_per_path):
+            image_path = os.path.join(p, img_names[i])
+            if image_path[-4:] == '.jpg' or image_path[-4:] == '.png' or image_path[-5:] == '.jpeg': 
+                frame.append(image_path)
+    return frame
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='region gan')
 
@@ -259,7 +298,12 @@ if __name__ == "__main__":
     parser.add_argument('--im_size', type=int, default=1024, help='image resolution')
     parser.add_argument('--ckpt', type=str, default='None', help='checkpoint weight path if have one')
     parser.add_argument('--amp',action='store_true', help='use mixed precision')
+    parser.add_argument('--nda', action='store_true')
+    parser.add_argument('--jigsaw', action='store_true')
     parser.add_argument('--jigsaw_k', type=int, default=8, help='number of iterations')
+
+    parser.add_argument('--nda_path', type=str, help='list of paths to use as negative data, delimiter ,')
+    parser.add_argument('--nda_samples', type=int, default=500 )
 
     args = parser.parse_args()
     print(args)
