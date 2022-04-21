@@ -23,7 +23,31 @@ percept = lpips.PerceptualLoss(model='net-lin', net='vgg', use_gpu=True)
 
 
 #torch.backends.cudnn.benchmark = True
+def get_perm(l) :
+    perm = torch.randperm(l)
+    while torch.all(torch.eq(perm, torch.arange(l))) :
+        perm = torch.randperm(l)
+    return perm
 
+def jigsaw(data, k = 8) :
+    with torch.no_grad() :
+        actual_h = data.size()[2]
+        actual_w = data.size()[3]
+        h = torch.split(data, int(actual_h/k), dim = 2)
+        splits = []
+        for i in range(k) :
+            splits += torch.split(h[i], int(actual_w/k), dim = 3)
+        fake_samples = torch.stack(splits, -1)
+        for idx in range(fake_samples.size()[0]) :
+            perm = get_perm(k*k)
+            # fake_samples[idx] = fake_samples[idx,:,:,:,torch.randperm(k*k)]
+            fake_samples[idx] = fake_samples[idx,:,:,:,perm]
+        fake_samples = torch.split(fake_samples, 1, dim=4)
+        merged = []
+        for i in range(k) :
+            merged += [torch.cat(fake_samples[i*k:(i+1)*k], 2)]
+        fake_samples = torch.squeeze(torch.cat(merged, 3), -1)
+        return fake_samples
 
 def crop_image_by_part(image, part):
     hw = image.shape[2]//2
@@ -52,6 +76,12 @@ def train_d(net, data, scaler, label="real"):
             
         scaler.scale(err).backward()
         return pred.mean().item(), err ,err_pred, err_rec_all, err_rec_small, err_rec_part, rec_all, rec_small, rec_part
+    elif label == 'real_fake':
+        with torch.cuda.amp.autocast():
+            pred = net(data, label)
+            err = F.relu( torch.rand_like(pred) * 0.2 + 0.8 + pred).mean() * 0.2 # scale loss
+        scaler.scale(err).backward()
+        return pred.mean().item()
     else:
         with torch.cuda.amp.autocast():
             pred = net(data, label)
@@ -157,6 +187,7 @@ def train(args):
 
         err_dr, err_back, err_pred, err_rec_all, err_rec_small, err_rec_part, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, gscaler ,label="real")
         err_dfake = train_d(netD, [fi.detach() for fi in fake_images], gscaler, label="fake")
+        err_drealfake = train_d(netD, jigsaw(real_image, args.jigsaw_k), gscaler, label="real_fake")
         gscaler.step(optimizerD)
         # optimizerD.step()
         
@@ -187,6 +218,7 @@ def train(args):
             'loss_d_rec_part': err_rec_part,
             'loss_d_fake': err_dfake,
             'loss_g': -err_g.item(),
+            'loss_d_real_fake': err_drealfake,
         })
 
         if iteration % (args.interval_save_sample) == 0:
@@ -227,6 +259,7 @@ if __name__ == "__main__":
     parser.add_argument('--im_size', type=int, default=1024, help='image resolution')
     parser.add_argument('--ckpt', type=str, default='None', help='checkpoint weight path if have one')
     parser.add_argument('--amp',action='store_true', help='use mixed precision')
+    parser.add_argument('--jigsaw_k', type=int, default=8, help='number of iterations')
 
     args = parser.parse_args()
     print(args)
