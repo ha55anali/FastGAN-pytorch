@@ -58,6 +58,17 @@ You can also use FastGAN to generate images with a pre-packaged Docker image, ho
     
     2.2. Please check the code in the shared pre-trained models on how each of them are configured differently on different datasets. Especially, compare the models.py for ffhq and art datasets, you will get an idea on what chages could be made on different datasets.
 
+## NDA modifications
+Implemented negative data augmentation for FAST-GAN.
+
+Arguments:
+--jigsaw: enabled using jigsaw with real images
+--jigsaw_k: parameter of jigsaw transformation, must be a power of 2
+
+--nda: enable nda using real images of different classes
+--nda_path
+--nda_samples
+
 ## 5. Other notes
 1. The provided scripts are not well organized, contributions are welcomed to clean them.
 2.  An third-party implementation of this paper can be found [here](https://github.com/lucidrains/lightweight-gan), where some other techniques are included. I suggest you try both implementation if you find one of them does not work. 
