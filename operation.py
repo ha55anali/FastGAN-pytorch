@@ -92,6 +92,26 @@ class  ImageFolder(Dataset):
 
         return img
 
+class  ImageFolderList(Dataset):
+    """docstring for ArtDataset"""
+    def __init__(self, flist, transform=None):
+        super( ImageFolderList, self).__init__()
+
+        self.frame = flist
+        self.transform = transform
+
+
+    def __len__(self):
+        return len(self.frame)
+
+    def __getitem__(self, idx):
+        file = self.frame[idx]
+        img = Image.open(file).convert('RGB')
+            
+        if self.transform:
+            img = self.transform(img) 
+
+        return img
 
 
 from io import BytesIO
