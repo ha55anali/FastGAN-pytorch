@@ -63,12 +63,15 @@ def get_dir(args):
 
 class  ImageFolder(Dataset):
     """docstring for ArtDataset"""
-    def __init__(self, root, transform=None):
+    def __init__(self, root, binary=False ,transform=None):
         super( ImageFolder, self).__init__()
         self.root = root
 
         self.frame = self._parse_frame()
         self.transform = transform
+
+        #boolean for binary channel
+        self.binary=binary
 
     def _parse_frame(self):
         frame = []
@@ -85,7 +88,10 @@ class  ImageFolder(Dataset):
 
     def __getitem__(self, idx):
         file = self.frame[idx]
-        img = Image.open(file).convert('RGB')
+        img = Image.open(file)
+
+        if not self.binary:
+            img=img.convert('RGB')
             
         if self.transform:
             img = self.transform(img) 
@@ -94,11 +100,12 @@ class  ImageFolder(Dataset):
 
 class  ImageFolderList(Dataset):
     """docstring for ArtDataset"""
-    def __init__(self, flist, transform=None):
+    def __init__(self, flist, binary=False, transform=None):
         super( ImageFolderList, self).__init__()
 
         self.frame = flist
         self.transform = transform
+        self.binary=binary
 
 
     def __len__(self):
@@ -106,7 +113,10 @@ class  ImageFolderList(Dataset):
 
     def __getitem__(self, idx):
         file = self.frame[idx]
-        img = Image.open(file).convert('RGB')
+        img = Image.open(file)
+        
+        if not self.binary:
+            img=img.convert('RGB')
             
         if self.transform:
             img = self.transform(img) 

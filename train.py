@@ -128,11 +128,12 @@ def train(args):
         from operation import MultiResolutionDataset
         dataset = MultiResolutionDataset(data_root, trans, 1024)
     else:
-        dataset = ImageFolder(root=data_root, transform=trans)
+        dataset = ImageFolder(root=data_root, transform=trans, binary=args.nc==1)
 
     nda_dataset=ImageFolderList(
         sample_nda(args.nda_path, args.nda_samples),
-        transform=trans
+        transform=trans,
+        binary=args.nc==1
     )
 
     dataloader = iter(DataLoader(dataset, batch_size=batch_size, shuffle=False,
@@ -150,10 +151,10 @@ def train(args):
     
     
     #from model_s import Generator, Discriminator
-    netG = Generator(ngf=ngf, nz=nz, im_size=im_size)
+    netG = Generator(ngf=ngf, nz=nz, im_size=im_size, nc=args.nc)
     netG.apply(weights_init)
 
-    netD = Discriminator(ndf=ndf, im_size=im_size)
+    netD = Discriminator(ndf=ndf, im_size=im_size, nc=args.nc)
     netD.apply(weights_init)
 
     netG.to(device)
@@ -295,6 +296,7 @@ if __name__ == "__main__":
     parser.add_argument('--start_iter', type=int, default=0, help='the iteration to start training')
     parser.add_argument('--batch_size', type=int, default=8, help='mini batch number of images')
     parser.add_argument('--im_size', type=int, default=1024, help='image resolution')
+    parser.add_argument('--nc', type=int, default=3, help='number of input channels')
     parser.add_argument('--ckpt', type=str, default='None', help='checkpoint weight path if have one')
     parser.add_argument('--amp',action='store_true', help='use mixed precision')
 
