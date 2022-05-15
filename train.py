@@ -130,17 +130,19 @@ def train(args):
     else:
         dataset = ImageFolder(root=data_root, transform=trans)
 
-    nda_dataset=ImageFolderList(
-        sample_nda(args.nda_path, args.nda_samples),
-        transform=trans
-    )
+    if args.nda:
+        nda_dataset=ImageFolderList(
+            sample_nda(args.nda_path, args.nda_samples),
+            transform=trans
+        )
 
     dataloader = iter(DataLoader(dataset, batch_size=batch_size, shuffle=False,
                       sampler=InfiniteSamplerWrapper(dataset), num_workers=dataloader_workers, pin_memory=True))
-    nda_dataloader = iter(DataLoader(nda_dataset, batch_size=batch_size, shuffle=False,
-                      sampler=InfiniteSamplerWrapper(nda_dataset), num_workers=dataloader_workers, pin_memory=True))
-    
-    print(f'nda samples: {len(nda_dataset)}')
+    if args.nda:
+        nda_dataloader = iter(DataLoader(nda_dataset, batch_size=batch_size, shuffle=False,
+                          sampler=InfiniteSamplerWrapper(nda_dataset), num_workers=dataloader_workers, pin_memory=True))
+    if args.nda:
+        print(f'nda samples: {len(nda_dataset)}')
     '''
     loader = MultiEpochsDataLoader(dataset, batch_size=batch_size, 
                                shuffle=True, num_workers=dataloader_workers, 
@@ -183,8 +185,9 @@ def train(args):
     for iteration in tqdm(range(current_iteration, total_iterations+1)):
         real_image = next(dataloader)
         real_image = real_image.to(device)
-        real_fake_image = next(nda_dataloader)
-        real_fake_image = real_fake_image.to(device)
+        if args.nda:
+            real_fake_image = next(nda_dataloader)
+            real_fake_image = real_fake_image.to(device)
         current_batch_size = real_image.size(0)
         noise = torch.Tensor(current_batch_size, nz).normal_(0, 1).to(device)
 
@@ -192,7 +195,8 @@ def train(args):
             fake_images = netG(noise)
 
         real_image = DiffAugment(real_image, policy=policy)
-        real_fake_image = DiffAugment(real_fake_image, policy=policy)
+        if args.nda:
+            real_fake_image = DiffAugment(real_fake_image, policy=policy)
         fake_images = [DiffAugment(fake, policy=policy) for fake in fake_images]
         
         ## 2. train Discriminator
