@@ -305,9 +305,11 @@ if __name__ == "__main__":
     parser.add_argument('--nda_path', type=str, help='list of paths to use as negative data, delimiter ,')
     parser.add_argument('--nda_samples', type=int, default=500 )
 
+    parser.add_argument('--wandb_projname', type=str)
+
     args = parser.parse_args()
     print(args)
 
-    wandb.init(config=args)
+    wandb.init(project=args.wandb_projname, name=args.name ,config=args)
 
     train(args)
