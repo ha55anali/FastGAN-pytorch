@@ -201,12 +201,10 @@ def train(args):
         err_dr, err_back, err_pred, err_rec_all, err_rec_small, err_rec_part, rec_img_all, rec_img_small, rec_img_part = train_d(netD, real_image, gscaler ,label="real")
         err_dfake = train_d(netD, [fi.detach() for fi in fake_images], gscaler, label="fake")
 
-        err_drealfake=0
+        if args.jigsaw:
+            err_djigsaw = train_d(netD, jigsaw(real_image, args.jigsaw_k), gscaler, label="real_fake")
         if args.nda:
-            if args.jigsaw:
-                err_drealfake = train_d(netD, jigsaw(real_image, args.jigsaw_k), gscaler, label="real_fake")
-            else:
-                err_drealfake = train_d(netD, real_fake_image, gscaler, label="real_fake")
+            err_drealfake = train_d(netD, real_fake_image, gscaler, label="real_fake")
 
         gscaler.step(optimizerD)
         # optimizerD.step()
@@ -238,7 +236,8 @@ def train(args):
             'loss_d_rec_part': err_rec_part,
             'loss_d_fake': err_dfake,
             'loss_g': -err_g.item(),
-            'loss_d_real_fake': err_drealfake,
+            'loss_d_real_fake': err_drealfake if args.nda else 0,
+            'loss_d_jigsaw': err_djigsaw if args.nda else 0,
         })
 
         if iteration % (args.interval_save_sample) == 0:
@@ -298,10 +297,11 @@ if __name__ == "__main__":
     parser.add_argument('--im_size', type=int, default=1024, help='image resolution')
     parser.add_argument('--ckpt', type=str, default='None', help='checkpoint weight path if have one')
     parser.add_argument('--amp',action='store_true', help='use mixed precision')
-    parser.add_argument('--nda', action='store_true')
-    parser.add_argument('--jigsaw', action='store_true')
+
+    parser.add_argument('--jigsaw', help='enable jigsaw on real data', action='store_true')
     parser.add_argument('--jigsaw_k', type=int, default=8, help='number of iterations')
 
+    parser.add_argument('--nda', help='enable real different class nda', action='store_true')
     parser.add_argument('--nda_path', type=str, help='list of paths to use as negative data, delimiter ,')
     parser.add_argument('--nda_samples', type=int, default=500 )
 
